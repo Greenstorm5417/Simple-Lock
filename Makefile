@@ -34,9 +34,9 @@ GEN_C = $(LOCK_C) $(VIEW_C) $(PIXEL_C)
 
 all: build/simple-lock
 
-build/simple-lock: main.c auth.c keymap.c config.c auth.h keymap.h config.h Makefile $(GEN_H) $(GEN_C)
+build/simple-lock: src/main.c src/auth.c src/keymap.c src/config.c src/auth.h src/keymap.h src/config.h Makefile $(GEN_H) $(GEN_C)
 	mkdir -p build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -I$(PROTO_DIR) -o $@ main.c auth.c keymap.c config.c $(GEN_C) $(LDFLAGS) $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I$(PROTO_DIR) -o $@ src/main.c src/auth.c src/keymap.c src/config.c $(GEN_C) $(LDFLAGS) $(LDLIBS)
 
 $(LOCK_H): $(LOCK_XML)
 	mkdir -p $(PROTO_DIR)
