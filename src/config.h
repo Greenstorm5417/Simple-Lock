@@ -11,6 +11,7 @@ struct config {
     uint32_t input;
     uint32_t fail;
     int fail_ms;
+    bool clock;
     char service[SERVICE_MAX];
 };
 

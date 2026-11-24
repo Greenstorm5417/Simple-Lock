@@ -71,9 +71,6 @@ static const xkb_mod_mask_t locked_bit[LEVEL_BLOCK] = { 0, 0, 1, 1, 0, 0 };
 alignas(4096)
 static struct key_table live;
 
-alignas(4096)
-static struct key_table scratch;
-
 static bool load_fn(void* handle, const char* name, void* dest) {
     void* sym = dlsym(handle, name);
     if (!sym) {
@@ -107,15 +104,22 @@ static uint8_t classify_sym(xkb_keysym_t sym) {
     }
 }
 
-static void drop_scratch(void) {
-    explicit_bzero(&scratch, sizeof(scratch));
-
-    uintptr_t start = (uintptr_t) &scratch;
-    uintptr_t end = start + sizeof(scratch);
-    uintptr_t page_end = end & ~(uintptr_t) 4095;
-    if (page_end > start) {
-        madvise((void*) start, page_end - start, MADV_DONTNEED);
+static struct key_table* map_scratch(void) {
+    struct key_table* scratch = mmap(NULL, sizeof(*scratch), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (scratch == MAP_FAILED) {
+        return NULL;
     }
+
+    return scratch;
+}
+
+static void drop_scratch(struct key_table* scratch) {
+    if (!scratch) {
+        return;
+    }
+
+    explicit_bzero(scratch, sizeof(*scratch));
+    munmap(scratch, sizeof(*scratch));
 }
 
 static int choose_level(const struct key_table* table, uint32_t depressed, uint32_t latched, uint32_t locked) {
@@ -196,6 +200,7 @@ int keys_load(const char* text, size_t size) {
     struct xkb_context* ctx = NULL;
     struct xkb_keymap* map = NULL;
     struct xkb_state* st = NULL;
+    struct key_table* scratch = NULL;
     int ret = -1;
 
     void* so = dlopen("libxkbcommon.so.0", RTLD_NOW | RTLD_LOCAL);
@@ -226,12 +231,17 @@ int keys_load(const char* text, size_t size) {
         goto end;
     }
 
-    memset(&scratch, 0, sizeof(scratch));
-    scratch.shift = mask_mod(&api, map, XKB_MOD_NAME_SHIFT);
-    scratch.lock = mask_mod(&api, map, XKB_MOD_NAME_CAPS);
-    scratch.control = mask_mod(&api, map, XKB_MOD_NAME_CTRL);
-    scratch.level3 = mask_mod(&api, map, XKB_MOD_NAME_MOD5);
-    scratch.num = mask_mod(&api, map, XKB_MOD_NAME_NUM);
+    scratch = map_scratch();
+    if (!scratch) {
+        warn("mmap");
+        goto end;
+    }
+
+    scratch->shift = mask_mod(&api, map, XKB_MOD_NAME_SHIFT);
+    scratch->lock = mask_mod(&api, map, XKB_MOD_NAME_CAPS);
+    scratch->control = mask_mod(&api, map, XKB_MOD_NAME_CTRL);
+    scratch->level3 = mask_mod(&api, map, XKB_MOD_NAME_MOD5);
+    scratch->num = mask_mod(&api, map, XKB_MOD_NAME_NUM);
 
     xkb_layout_index_t layouts = api.num_layouts(map);
     if (layouts == 0) {
@@ -240,7 +250,7 @@ int keys_load(const char* text, size_t size) {
     if (layouts > KEY_GROUP_MAX) {
         layouts = KEY_GROUP_MAX;
     }
-    scratch.groups = (uint8_t) layouts;
+    scratch->groups = (uint8_t) layouts;
 
     for (xkb_layout_index_t group = 0; group < layouts; group++) {
         for (uint32_t code = 0; code < KEY_CODE_MAX; code++) {
@@ -249,13 +259,13 @@ int keys_load(const char* text, size_t size) {
                 xkb_mod_mask_t locked = 0;
 
                 if (depressed_bit[level] & 1) {
-                    depressed |= scratch.shift;
+                    depressed |= scratch->shift;
                 }
                 if (depressed_bit[level] & 2) {
-                    depressed |= scratch.level3;
+                    depressed |= scratch->level3;
                 }
                 if (locked_bit[level] & 1) {
-                    locked |= scratch.lock;
+                    locked |= scratch->lock;
                 }
 
                 api.update_mask(st, depressed, 0, locked, 0, 0, group);
@@ -263,15 +273,15 @@ int keys_load(const char* text, size_t size) {
                 char buf[8];
                 int written = api.key_utf8(st, code, buf, sizeof(buf));
                 if (written > 0 && written <= KEY_UTF8_MAX && (unsigned char) buf[0] >= 0x20) {
-                    scratch.len[group][level][code] = (uint8_t) written;
-                    memcpy(scratch.text[group][level][code], buf, (size_t) written);
+                    scratch->len[group][level][code] = (uint8_t) written;
+                    memcpy(scratch->text[group][level][code], buf, (size_t) written);
                 }
 
-                api.update_mask(st, depressed, 0, locked | scratch.num, 0, 0, group);
+                api.update_mask(st, depressed, 0, locked | scratch->num, 0, 0, group);
                 written = api.key_utf8(st, code, buf, sizeof(buf));
                 if (written > 0 && written <= KEY_UTF8_MAX && (unsigned char) buf[0] >= 0x20) {
-                    scratch.len[group][level + LEVEL_BLOCK][code] = (uint8_t) written;
-                    memcpy(scratch.text[group][level + LEVEL_BLOCK][code], buf, (size_t) written);
+                    scratch->len[group][level + LEVEL_BLOCK][code] = (uint8_t) written;
+                    memcpy(scratch->text[group][level + LEVEL_BLOCK][code], buf, (size_t) written);
                 }
             }
         }
@@ -283,7 +293,7 @@ int keys_load(const char* text, size_t size) {
         if (kind == KEY_KIND_NONE) {
             for (xkb_layout_index_t group = 0; group < layouts; group++) {
                 for (int level = 0; level < KEY_LEVEL_MAX; level++) {
-                    if (scratch.len[group][level][code] > 0) {
+                    if (scratch->len[group][level][code] > 0) {
                         kind = KEY_KIND_TEXT;
                         break;
                     }
@@ -295,11 +305,11 @@ int keys_load(const char* text, size_t size) {
             }
         }
 
-        scratch.kind[code] = kind;
+        scratch->kind[code] = kind;
     }
 
-    scratch.ready = true;
-    live = scratch;
+    scratch->ready = true;
+    live = *scratch;
     ret = 0;
 
 end:
@@ -313,7 +323,7 @@ end:
         api.context_unref(ctx);
     }
     dlclose(so);
-    drop_scratch();
+    drop_scratch(scratch);
     return ret;
 }
 

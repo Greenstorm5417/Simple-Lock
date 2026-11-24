@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "auth.h"
+#include "clock.h"
 #include "config.h"
 #include "ext-session-lock-v1-client-protocol.h"
 #include "keymap.h"
@@ -29,6 +30,7 @@ enum {
     SEAT_MAX = 4,
     PASSWORD_MAX = 256,
     KEYMAP_MAX = 1024 * 1024,
+    CLOCK_STORE_MAX = 4,
 };
 
 enum shade {
@@ -49,6 +51,24 @@ struct output {
     int32_t height;
     bool configured;
     bool ack;
+    struct wl_surface* clock_surface;
+    struct wl_subsurface* clock_sub;
+    struct wp_viewport* clock_viewport;
+    struct wl_buffer* clock_buffer;
+    uint32_t* clock_pixels;
+    int32_t clock_dest_w;
+    int32_t clock_dest_h;
+    int clock_scale;
+};
+
+struct clock_store {
+    int scale;
+    int width;
+    int height;
+    size_t size;
+    uint32_t* pixels;
+    struct wl_shm_pool* pool;
+    int users;
 };
 
 struct seat {
@@ -77,6 +97,7 @@ static void handle_modifiers(void* data, struct wl_keyboard* keyboard, uint32_t 
 static void handle_repeat_info(void* data, struct wl_keyboard* keyboard, int32_t rate, int32_t delay);
 static void handle_seat_capabilities(void* data, struct wl_seat* wl_seat, uint32_t capabilities);
 static void handle_seat_name(void* data, struct wl_seat* wl_seat, const char* name);
+static void handle_shm_format(void* data, struct wl_shm* wl_shm, uint32_t format);
 static void handle_registry(void* data, struct wl_registry* source, uint32_t name, const char* interface, uint32_t version);
 static void handle_registry_remove(void* data, struct wl_registry* source, uint32_t name);
 
@@ -87,6 +108,9 @@ static struct ext_session_lock_manager_v1* lock_manager;
 static struct ext_session_lock_v1* session_lock;
 static struct wp_viewporter* viewporter;
 static struct wp_single_pixel_buffer_manager_v1* single_pixel;
+static struct wl_shm* shm;
+static struct wl_subcompositor* subcompositor;
+static bool shm_argb;
 
 static struct output outputs[OUTPUT_MAX];
 static struct seat seats[SEAT_MAX];
@@ -103,6 +127,9 @@ static int exit_status = EXIT_SUCCESS;
 
 static int repeat_fd = -1;
 static int fail_fd = -1;
+static int clock_fd = -1;
+static bool clock_broken;
+static struct clock_store clock_stores[CLOCK_STORE_MAX];
 static struct seat* repeat_seat;
 static uint32_t repeat_key;
 static bool repeat_down;
@@ -133,6 +160,10 @@ static const struct wl_keyboard_listener keyboard_listener = {
 static const struct wl_seat_listener seat_listener = {
     .capabilities = handle_seat_capabilities,
     .name = handle_seat_name,
+};
+
+static const struct wl_shm_listener shm_listener = {
+    .format = handle_shm_format,
 };
 
 static const struct wl_registry_listener registry_listener = {
@@ -214,6 +245,277 @@ static void push_password(const char* text) {
     password[password_len] = '\0';
 }
 
+static void release_clock_store(int scale);
+
+static void drop_clock(struct output* out) {
+    if (out->clock_sub) {
+        wl_subsurface_destroy(out->clock_sub);
+        out->clock_sub = NULL;
+    }
+    if (out->clock_viewport) {
+        wp_viewport_destroy(out->clock_viewport);
+        out->clock_viewport = NULL;
+    }
+    if (out->clock_buffer) {
+        wl_buffer_destroy(out->clock_buffer);
+        out->clock_buffer = NULL;
+        release_clock_store(out->clock_scale);
+        out->clock_scale = 0;
+        out->clock_pixels = NULL;
+    }
+    if (out->clock_surface) {
+        wl_surface_destroy(out->clock_surface);
+        out->clock_surface = NULL;
+    }
+}
+
+static void release_clock_store(int scale) {
+    for (int i = 0; i < CLOCK_STORE_MAX; i++) {
+        struct clock_store* store = &clock_stores[i];
+        if (store->scale != scale || !store->pool) {
+            continue;
+        }
+
+        if (store->users > 0) {
+            store->users--;
+        }
+        if (store->users == 0) {
+            wl_shm_pool_destroy(store->pool);
+            munmap(store->pixels, store->size);
+            *store = (struct clock_store) {0};
+        }
+        return;
+    }
+}
+
+static int clock_scale_for(const struct output* out) {
+    int scale = out->height / (CLOCK_H * 12);
+    int width_limit = out->width > 32 ? (out->width - 32) / CLOCK_W : 1;
+    int height_limit = out->height / CLOCK_H;
+
+    if (scale < 6) {
+        scale = 6;
+    }
+    if (scale > 32) {
+        scale = 32;
+    }
+    if (width_limit < 1) {
+        width_limit = 1;
+    }
+    if (height_limit < 1) {
+        height_limit = 1;
+    }
+    if (scale > width_limit) {
+        scale = width_limit;
+    }
+    if (scale > height_limit) {
+        scale = height_limit;
+    }
+    return scale;
+}
+
+static bool ensure_clock(struct output* out) {
+    if (out->clock_surface) {
+        return true;
+    }
+    if (clock_broken || !compositor || !shm || !subcompositor || !viewporter) {
+        return false;
+    }
+
+    struct wl_surface* surface = wl_compositor_create_surface(compositor);
+    if (!surface) {
+        warnx("wl_compositor_create_surface");
+        clock_broken = true;
+        return false;
+    }
+
+    struct wl_subsurface* sub = wl_subcompositor_get_subsurface(subcompositor, surface, out->surface);
+    if (!sub) {
+        warnx("wl_subcompositor_get_subsurface");
+        wl_surface_destroy(surface);
+        clock_broken = true;
+        return false;
+    }
+
+    struct wp_viewport* viewport = wp_viewporter_get_viewport(viewporter, surface);
+    if (!viewport) {
+        warnx("wp_viewporter_get_viewport");
+        wl_subsurface_destroy(sub);
+        wl_surface_destroy(surface);
+        clock_broken = true;
+        return false;
+    }
+
+    wl_subsurface_set_desync(sub);
+    out->clock_surface = surface;
+    out->clock_sub = sub;
+    out->clock_viewport = viewport;
+    return true;
+}
+
+static struct clock_store* take_clock_store(int scale) {
+    struct clock_store* slot = NULL;
+
+    for (int i = 0; i < CLOCK_STORE_MAX; i++) {
+        if (clock_stores[i].pool && clock_stores[i].scale == scale) {
+            return &clock_stores[i];
+        }
+        if (!clock_stores[i].pool && !slot) {
+            slot = &clock_stores[i];
+        }
+    }
+    if (!slot) {
+        warnx("clock scale limit");
+        return NULL;
+    }
+
+    int width = CLOCK_W * scale;
+    int height = CLOCK_H * scale;
+    size_t size = (size_t) width * (size_t) height * sizeof(uint32_t);
+    if (size > (size_t) INT32_MAX) {
+        warnx("clock buffer");
+        return NULL;
+    }
+
+    int fd = memfd_create("simple-lock-clock", MFD_CLOEXEC);
+    if (fd < 0) {
+        warn("memfd_create");
+        return NULL;
+    }
+    if (ftruncate(fd, (off_t) size) < 0) {
+        warn("ftruncate");
+        close(fd);
+        return NULL;
+    }
+
+    uint32_t* pixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (pixels == MAP_FAILED) {
+        warn("mmap");
+        close(fd);
+        return NULL;
+    }
+
+    struct wl_shm_pool* pool = wl_shm_create_pool(shm, fd, (int32_t) size);
+    close(fd);
+    if (!pool) {
+        warnx("wl_shm_create_pool");
+        munmap(pixels, size);
+        return NULL;
+    }
+
+    slot->scale = scale;
+    slot->width = width;
+    slot->height = height;
+    slot->size = size;
+    slot->pixels = pixels;
+    slot->pool = pool;
+    slot->users = 0;
+    return slot;
+}
+
+static bool ensure_clock_buffer(struct output* out, int scale) {
+    if (out->clock_buffer && out->clock_pixels && out->clock_scale == scale) {
+        return true;
+    }
+    if (clock_broken) {
+        return false;
+    }
+
+    if (out->clock_buffer) {
+        wl_buffer_destroy(out->clock_buffer);
+        out->clock_buffer = NULL;
+        release_clock_store(out->clock_scale);
+        out->clock_scale = 0;
+        out->clock_pixels = NULL;
+    }
+
+    struct clock_store* store = take_clock_store(scale);
+    if (!store) {
+        clock_broken = true;
+        return false;
+    }
+
+    struct wl_buffer* buffer = wl_shm_pool_create_buffer(store->pool, 0, store->width, store->height, store->width * (int) sizeof(uint32_t), WL_SHM_FORMAT_ARGB8888);
+    if (!buffer) {
+        warnx("wl_shm_pool_create_buffer");
+        if (store->users == 0) {
+            release_clock_store(scale);
+        }
+        clock_broken = true;
+        return false;
+    }
+
+    store->users++;
+    out->clock_buffer = buffer;
+    out->clock_pixels = store->pixels;
+    out->clock_scale = scale;
+    return true;
+}
+
+static void place_clock(struct output* out) {
+    if (!cfg.clock || !shm_argb || !ensure_clock(out)) {
+        return;
+    }
+
+    int scale = clock_scale_for(out);
+    if (!ensure_clock_buffer(out, scale)) {
+        return;
+    }
+
+    char text[CLOCK_TEXT];
+    clock_stamp(text);
+    int dest_w = CLOCK_W * scale;
+    int dest_h = CLOCK_H * scale;
+    clock_draw(out->clock_pixels, dest_w, scale, text);
+
+    int x = (out->width - dest_w) / 2;
+    int y = out->height / 12;
+    if (x < 0) {
+        x = 0;
+    }
+    if (y + dest_h > out->height) {
+        y = 0;
+    }
+
+    out->clock_dest_w = dest_w;
+    out->clock_dest_h = dest_h;
+    wl_subsurface_set_position(out->clock_sub, x, y);
+    wp_viewport_set_source(out->clock_viewport, 0, 0, wl_fixed_from_int(dest_w), wl_fixed_from_int(dest_h));
+    wp_viewport_set_destination(out->clock_viewport, dest_w, dest_h);
+    wl_surface_attach(out->clock_surface, out->clock_buffer, 0, 0);
+    wl_surface_damage(out->clock_surface, 0, 0, dest_w, dest_h);
+    wl_surface_commit(out->clock_surface);
+}
+
+static void refresh_clocks(void) {
+    char text[CLOCK_TEXT];
+    clock_stamp(text);
+
+    for (int i = 0; i < CLOCK_STORE_MAX; i++) {
+        struct clock_store* store = &clock_stores[i];
+        if (!store->pixels || store->users == 0) {
+            continue;
+        }
+
+        clock_draw(store->pixels, store->width, store->scale, text);
+    }
+
+    for (int i = 0; i < OUTPUT_MAX; i++) {
+        struct output* out = &outputs[i];
+        if (!out->clock_surface || !out->clock_buffer) {
+            continue;
+        }
+
+        wl_surface_attach(out->clock_surface, out->clock_buffer, 0, 0);
+        wl_surface_damage(out->clock_surface, 0, 0, out->clock_dest_w, out->clock_dest_h);
+        wl_surface_commit(out->clock_surface);
+    }
+
+    if (clock_fd >= 0) {
+        arm_timer(clock_fd, clock_delay_ms(), 0);
+    }
+}
+
 static void present(struct output* out) {
     if (!out->configured || !out->lock_surface || !single_pixel) {
         return;
@@ -244,6 +546,7 @@ static void present(struct output* out) {
 
     wl_surface_attach(out->surface, buffer, 0, 0);
     wl_surface_damage(out->surface, 0, 0, out->width, out->height);
+    place_clock(out);
     wl_surface_commit(out->surface);
 
     if (out->buffer) {
@@ -313,6 +616,7 @@ static void drop_keyboard(struct seat* seat) {
 }
 
 static void destroy_output(struct output* out) {
+    drop_clock(out);
     if (out->lock_surface) {
         ext_session_lock_surface_v1_destroy(out->lock_surface);
     }
@@ -699,6 +1003,15 @@ static void add_seat(struct wl_registry* source, uint32_t name, uint32_t version
     wl_seat_add_listener(seat->seat, &seat_listener, seat);
 }
 
+static void handle_shm_format(void* data, struct wl_shm* wl_shm, uint32_t format) {
+    (void) data;
+    (void) wl_shm;
+
+    if (format == WL_SHM_FORMAT_ARGB8888) {
+        shm_argb = true;
+    }
+}
+
 static void handle_registry(void* data, struct wl_registry* source, uint32_t name, const char* interface, uint32_t version) {
     (void) data;
 
@@ -721,6 +1034,17 @@ static void handle_registry(void* data, struct wl_registry* source, uint32_t nam
     } else if (strcmp(interface, wp_single_pixel_buffer_manager_v1_interface.name) == 0) {
         if (!single_pixel) {
             single_pixel = wl_registry_bind(source, name, &wp_single_pixel_buffer_manager_v1_interface, 1);
+        }
+    } else if (cfg.clock && strcmp(interface, wl_shm_interface.name) == 0) {
+        if (!shm) {
+            shm = wl_registry_bind(source, name, &wl_shm_interface, 1);
+            if (shm) {
+                wl_shm_add_listener(shm, &shm_listener, NULL);
+            }
+        }
+    } else if (cfg.clock && strcmp(interface, wl_subcompositor_interface.name) == 0) {
+        if (!subcompositor) {
+            subcompositor = wl_registry_bind(source, name, &wl_subcompositor_interface, 1);
         }
     } else if (strcmp(interface, wl_output_interface.name) == 0) {
         add_output(source, name, version);
@@ -828,6 +1152,14 @@ static void cleanup(void) {
         wp_single_pixel_buffer_manager_v1_destroy(single_pixel);
         single_pixel = NULL;
     }
+    if (subcompositor) {
+        wl_subcompositor_destroy(subcompositor);
+        subcompositor = NULL;
+    }
+    if (shm) {
+        wl_shm_destroy(shm);
+        shm = NULL;
+    }
     if (compositor) {
         wl_compositor_destroy(compositor);
         compositor = NULL;
@@ -847,6 +1179,10 @@ static void cleanup(void) {
     if (fail_fd >= 0) {
         close(fail_fd);
         fail_fd = -1;
+    }
+    if (clock_fd >= 0) {
+        close(clock_fd);
+        clock_fd = -1;
     }
 }
 
@@ -903,6 +1239,15 @@ int main(int argc, char* argv[]) {
         warn("timerfd_create");
         exit_status = EXIT_FAILURE;
         goto end;
+    }
+
+    if (cfg.clock) {
+        clock_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+        if (clock_fd < 0) {
+            warn("timerfd_create");
+        } else {
+            arm_timer(clock_fd, clock_delay_ms(), 0);
+        }
     }
 
     display = wl_display_connect(NULL);
@@ -992,12 +1337,18 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        struct pollfd pfds[3] = {
+        struct pollfd pfds[4] = {
             { .fd = wl_display_get_fd(display), .events = POLLIN },
             { .fd = repeat_fd, .events = POLLIN },
             { .fd = fail_fd, .events = POLLIN },
         };
-        int ready = poll(pfds, 3, -1);
+        nfds_t nfds = 3;
+        if (clock_fd >= 0) {
+            pfds[3].fd = clock_fd;
+            pfds[3].events = POLLIN;
+            nfds = 4;
+        }
+        int ready = poll(pfds, nfds, -1);
         if (ready < 0) {
             wl_display_cancel_read(display);
             if (errno == EINTR) {
@@ -1040,6 +1391,11 @@ int main(int argc, char* argv[]) {
         if (pfds[2].revents & POLLIN) {
             drain_timer(fail_fd);
             end_fail();
+        }
+
+        if (nfds == 4 && (pfds[3].revents & POLLIN)) {
+            drain_timer(clock_fd);
+            refresh_clocks();
         }
 
         take_input();

@@ -14,14 +14,6 @@ enum {
     FAIL_MS_MAX = 60000,
 };
 
-void config_defaults(struct config* cfg) {
-    cfg->idle = 0x000000u;
-    cfg->input = 0x005577u;
-    cfg->fail = 0xCC3333u;
-    cfg->fail_ms = 1000;
-    memcpy(cfg->service, "simple-lock", sizeof("simple-lock"));
-}
-
 static int parse_color(const char* text, uint32_t* out) {
     if (text[0] == '#') {
         text++;
@@ -87,6 +79,17 @@ static void apply_line(struct config* cfg, const char* path, int line, const cha
         return;
     }
 
+    if (strcmp(key, "clock") == 0) {
+        if (strcmp(value, "on") == 0 || strcmp(value, "yes") == 0 || strcmp(value, "1") == 0) {
+            cfg->clock = true;
+        } else if (strcmp(value, "off") == 0 || strcmp(value, "no") == 0 || strcmp(value, "0") == 0) {
+            cfg->clock = false;
+        } else {
+            warnx("%s:%d: bad clock '%s'", path, line, value);
+        }
+        return;
+    }
+
     if (strcmp(key, "service") == 0) {
         if (parse_service(value, cfg->service) < 0) {
             warnx("%s:%d: bad service '%s'", path, line, value);
@@ -113,6 +116,15 @@ static int read_line(FILE* file, char* line, size_t size) {
     line[0] = '\0';
     errno = EMSGSIZE;
     return -1;
+}
+
+void config_defaults(struct config* cfg) {
+    cfg->idle = 0x000000u;
+    cfg->input = 0x005577u;
+    cfg->fail = 0xCC3333u;
+    cfg->fail_ms = 1000;
+    cfg->clock = true;
+    memcpy(cfg->service, "simple-lock", sizeof("simple-lock"));
 }
 
 int config_read(struct config* cfg, const char* path) {
