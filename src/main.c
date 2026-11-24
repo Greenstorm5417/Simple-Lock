@@ -290,7 +290,7 @@ static void release_clock_store(int scale) {
 
 static int clock_scale_for(const struct output* out) {
     int scale = out->height / (CLOCK_H * 12);
-    int width_limit = out->width > 32 ? (out->width - 32) / CLOCK_W : 1;
+    int width_limit = out->width > 32 ? (out->width - 32) / clock_cols(cfg.hours12) : 1;
     int height_limit = out->height / CLOCK_H;
 
     if (scale < 6) {
@@ -369,7 +369,7 @@ static struct clock_store* take_clock_store(int scale) {
         return NULL;
     }
 
-    int width = CLOCK_W * scale;
+    int width = clock_cols(cfg.hours12) * scale;
     int height = CLOCK_H * scale;
     size_t size = (size_t) width * (size_t) height * sizeof(uint32_t);
     if (size > (size_t) INT32_MAX) {
@@ -463,8 +463,8 @@ static void place_clock(struct output* out) {
     }
 
     char text[CLOCK_TEXT];
-    clock_stamp(text);
-    int dest_w = CLOCK_W * scale;
+    clock_stamp(text, cfg.hours12);
+    int dest_w = clock_cols(cfg.hours12) * scale;
     int dest_h = CLOCK_H * scale;
     clock_draw(out->clock_pixels, dest_w, scale, text);
 
@@ -489,7 +489,7 @@ static void place_clock(struct output* out) {
 
 static void refresh_clocks(void) {
     char text[CLOCK_TEXT];
-    clock_stamp(text);
+    clock_stamp(text, cfg.hours12);
 
     for (int i = 0; i < CLOCK_STORE_MAX; i++) {
         struct clock_store* store = &clock_stores[i];

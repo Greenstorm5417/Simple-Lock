@@ -1,13 +1,11 @@
 #pragma once
 
-#include <stdint.h>
-
 enum {
-    CLOCK_W = 25,
     CLOCK_H = 7,
-    CLOCK_TEXT = 6,
+    CLOCK_TEXT = 9,
 };
 
-void clock_stamp(char text[CLOCK_TEXT]);
+int clock_cols(bool twelve);
+void clock_stamp(char text[CLOCK_TEXT], bool twelve);
 int clock_delay_ms(void);
 void clock_draw(uint32_t* pixels, int stride, int scale, const char text[CLOCK_TEXT]);

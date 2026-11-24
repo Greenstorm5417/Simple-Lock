@@ -12,6 +12,7 @@ struct config {
     uint32_t fail;
     int fail_ms;
     bool clock;
+    bool hours12;
     char service[SERVICE_MAX];
 };
 
