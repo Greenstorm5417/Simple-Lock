@@ -33,9 +33,9 @@ GEN_C = $(LOCK_C) $(VIEW_C) $(PIXEL_C)
 
 .PHONY: all check install uninstall clean
 
-all: build/simple-lock
+all: build/kisslock
 
-build/simple-lock: src/main.c src/auth.c src/keymap.c src/config.c src/clock.c src/auth.h src/keymap.h src/config.h src/clock.h Makefile $(GEN_H) $(GEN_C)
+build/kisslock: src/main.c src/auth.c src/keymap.c src/config.c src/clock.c src/auth.h src/keymap.h src/config.h src/clock.h Makefile $(GEN_H) $(GEN_C)
 	mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I$(PROTO_DIR) -o $@ src/main.c src/auth.c src/keymap.c src/config.c src/clock.c $(GEN_C) $(LDFLAGS) $(LDLIBS)
 
@@ -63,13 +63,13 @@ $(PIXEL_C): $(PIXEL_XML)
 	mkdir -p $(PROTO_DIR)
 	$(WAYLAND_SCANNER) private-code $< $@
 
-install: build/simple-lock
-	install -Dm755 build/simple-lock "$(DESTDIR)$(BINDIR)/simple-lock"
-	install -Dm644 pam.d/simple-lock "$(DESTDIR)/etc/pam.d/simple-lock"
+install: build/kisslock
+	install -Dm755 build/kisslock "$(DESTDIR)$(BINDIR)/kisslock"
+	install -Dm644 pam.d/kisslock "$(DESTDIR)/etc/pam.d/kisslock"
 
 uninstall:
-	rm -f "$(DESTDIR)$(BINDIR)/simple-lock"
-	rm -f "$(DESTDIR)/etc/pam.d/simple-lock"
+	$(RM) "$(DESTDIR)$(BINDIR)/kisslock"
+	$(RM) "$(DESTDIR)/etc/pam.d/kisslock"
 
 clean:
-	rm -rf build
+	$(RM) -r build

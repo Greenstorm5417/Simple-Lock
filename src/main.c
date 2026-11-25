@@ -170,7 +170,7 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 static void usage(void) {
-    fprintf(stderr, "usage: simple-lock [-c file]\n");
+    fprintf(stderr, "usage: kisslock [-c file]\n");
     exit(EXIT_FAILURE);
 }
 
@@ -375,7 +375,7 @@ static struct clock_store* take_clock_store(int scale) {
         return NULL;
     }
 
-    int fd = memfd_create("simple-lock-clock", MFD_CLOEXEC);
+    int fd = memfd_create("kisslock-clock", MFD_CLOEXEC);
     if (fd < 0) {
         warn("memfd_create");
         return NULL;

@@ -33,7 +33,7 @@ case "${ID:-}" in
         ;;
     artix)
         install_pacman
-        echo "No runit service is installed. Bind simple-lock from the compositor."
+        echo "No runit service is installed. Bind kisslock from the compositor."
         ;;
     void)
         install_xbps
@@ -47,7 +47,3 @@ esac
 
 make -C "$root"
 as_root make -C "$root" install
-
-if [ ! -f /etc/simple-lock.conf ]; then
-    as_root install -Dm644 "$root/simple-lock.conf" /etc/simple-lock.conf
-fi

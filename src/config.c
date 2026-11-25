@@ -138,7 +138,7 @@ void config_defaults(struct config* cfg) {
     cfg->fail_ms = 1000;
     cfg->clock = true;
     cfg->hours12 = false;
-    memcpy(cfg->service, "simple-lock", sizeof("simple-lock"));
+    memcpy(cfg->service, "kisslock", 9);
 }
 
 int config_read(struct config* cfg, const char* path) {
@@ -197,9 +197,9 @@ static int user_path(char* path, size_t size) {
     int wrote = 0;
 
     if (xdg && xdg[0] != '\0') {
-        wrote = snprintf(path, size, "%s/simple-lock/config", xdg);
+        wrote = snprintf(path, size, "%s/kisslock/config", xdg);
     } else if (home && home[0] != '\0') {
-        wrote = snprintf(path, size, "%s/.config/simple-lock/config", home);
+        wrote = snprintf(path, size, "%s/.config/kisslock/config", home);
     } else {
         return -1;
     }
