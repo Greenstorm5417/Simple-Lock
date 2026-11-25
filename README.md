@@ -8,7 +8,7 @@ The screen is black when idle, `#005577` while a password is being typed, and `#
 
 A clock is drawn at the top of each output. `clock off` in the config file hides it. `clock on` is the default.
 
-Those colors, the fail timeout, the clock, and the PAM service name come from a config file when one is present. `simple-lock -c file` reads that file. With no `-c`, it reads `$XDG_CONFIG_HOME/simple-lock.conf`, or `~/.config/simple-lock.conf`, and otherwise `/etc/simple-lock.conf`. A missing file keeps the defaults above. A bad line is skipped. See `simple-lock.conf`.
+Those colors, the fail timeout, the clock, and the PAM service name come from a config file when one is present. `simple-lock -c file` reads that file. With no `-c`, it reads `$XDG_CONFIG_HOME/simple-lock/config`, or `~/.config/simple-lock/config`. A missing file keeps the defaults above. A bad line is skipped. See `example.conf`.
 
 The password is kept in a fixed 256-byte buffer, wiped with `explicit_bzero` on success and failure, and `mlock` is attempted so it is less likely to be swapped. Core dumps are disabled. `libxkbcommon` is loaded only long enough to fold the compositor keymap into a small table, then unloaded. `SIGINT`, `SIGTERM`, and the other terminal signals are ignored. Killing the process while it is locked leaves the session locked. Recover from another virtual terminal by restarting the compositor.
 
@@ -51,4 +51,4 @@ auth    required  pam_unix.so
 account required  pam_unix.so
 ```
 
-`make install` also copies `simple-lock.conf` to `PREFIX/share/simple-lock/simple-lock.conf`. `DESTDIR` stages the binary, the PAM stack, and that example. `make uninstall` removes them. Use the same prefix you installed with.
+`DESTDIR` stages the binary, the PAM stack, and that example. `make uninstall` removes them. Use the same prefix you installed with.

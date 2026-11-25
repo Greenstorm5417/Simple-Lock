@@ -12,19 +12,18 @@
 
 #include "keymap.h"
 
-enum {
-    KEY_CODE_MAX = 256,
-    KEY_GROUP_MAX = 2,
-    KEY_LEVEL_MAX = 12,
-    KEY_UTF8_MAX = 4,
-    LEVEL_BASE = 0,
-    LEVEL_SHIFT = 1,
-    LEVEL_CAPS = 2,
-    LEVEL_CAPS_SHIFT = 3,
-    LEVEL_ALT = 4,
-    LEVEL_ALT_SHIFT = 5,
-    LEVEL_BLOCK = 6,
-};
+#define KEY_CODE_MAX 256
+#define KEY_GROUP_MAX 2
+#define KEY_LEVEL_MAX 12
+#define KEY_UTF8_MAX 4
+
+#define LEVEL_BASE          0
+#define LEVEL_SHIFT         1
+#define LEVEL_CAPS          2
+#define LEVEL_CAPS_SHIFT    3
+#define LEVEL_ALT           4
+#define LEVEL_ALT_SHIFT     5
+#define LEVEL_BLOCK         6
 
 struct key_table {
     uint32_t shift;
@@ -98,14 +97,17 @@ static uint8_t classify_sym(xkb_keysym_t sym) {
         case XKB_KEY_KP_Enter:
         case XKB_KEY_ISO_Enter:
             return KEY_KIND_RETURN;
-        case XKB_KEY_BackSpace: return KEY_KIND_BACKSPACE;
-        case XKB_KEY_Escape: return KEY_KIND_ESCAPE;
-        default: return KEY_KIND_NONE;
+        case XKB_KEY_BackSpace:
+            return KEY_KIND_BACKSPACE;
+        case XKB_KEY_Escape:
+            return KEY_KIND_ESCAPE;
+        default:
+            return KEY_KIND_NONE;
     }
 }
 
 static struct key_table* map_scratch(void) {
-    struct key_table* scratch = mmap(NULL, sizeof(*scratch), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    struct key_table* scratch = mmap(NULL, sizeof(struct key_table), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (scratch == MAP_FAILED) {
         return NULL;
     }
@@ -196,11 +198,12 @@ static bool load_xkb(void* handle, struct xkb* api) {
 }
 
 int keys_load(const char* text, size_t size) {
-    struct xkb api = {0};
+    struct xkb api = {};
     struct xkb_context* ctx = NULL;
     struct xkb_keymap* map = NULL;
     struct xkb_state* st = NULL;
     struct key_table* scratch = NULL;
+
     int ret = -1;
 
     void* so = dlopen("libxkbcommon.so.0", RTLD_NOW | RTLD_LOCAL);

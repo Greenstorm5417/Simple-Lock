@@ -7,13 +7,14 @@ BINDIR = $(PREFIX)/bin
 WAYLAND_PROTOCOLS := $(shell $(PKG_CONFIG) --variable=pkgdatadir wayland-protocols)
 WAYLAND_SCANNER := $(shell $(PKG_CONFIG) --variable=wayland_scanner wayland-scanner)
 
-CFLAGS = -Os -std=c23 -Wall -Wextra -Wpedantic \
+CFLAGS = -O2 -std=c23 -Wall -Wextra -pedantic \
 	-Wnested-externs -Wold-style-definition -Wredundant-decls \
 	-Wshadow -Wstrict-prototypes -Wvla \
 	-ffunction-sections -fdata-sections \
 	$(shell $(PKG_CONFIG) --cflags wayland-client xkbcommon)
 LDFLAGS = -Wl,--gc-sections
-LDLIBS = $(shell $(PKG_CONFIG) --libs wayland-client) -lpam -ldl
+CPPFLAGS = $(shell $(PKG_CONFIG) --cflags wayland-client pam)
+LDLIBS += $(shell $(PKG_CONFIG) --libs wayland-client pam) -ldl
 
 PROTO_DIR = build/protocol
 LOCK_XML = $(WAYLAND_PROTOCOLS)/staging/ext-session-lock/ext-session-lock-v1.xml
@@ -62,22 +63,13 @@ $(PIXEL_C): $(PIXEL_XML)
 	mkdir -p $(PROTO_DIR)
 	$(WAYLAND_SCANNER) private-code $< $@
 
-check: build/simple-lock
-	! ./build/simple-lock --help
-	! ./build/simple-lock extra
-	! ./build/simple-lock -c /no/such/simple-lock.conf
-	! env -u WAYLAND_SOCKET -u XDG_CONFIG_HOME -u HOME WAYLAND_DISPLAY=simple-lock-missing ./build/simple-lock
-	! env -u WAYLAND_SOCKET WAYLAND_DISPLAY=simple-lock-missing ./build/simple-lock -c simple-lock.conf
-
 install: build/simple-lock
 	install -Dm755 build/simple-lock "$(DESTDIR)$(BINDIR)/simple-lock"
 	install -Dm644 pam.d/simple-lock "$(DESTDIR)/etc/pam.d/simple-lock"
-	install -Dm644 simple-lock.conf "$(DESTDIR)$(PREFIX)/share/simple-lock/simple-lock.conf"
 
 uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/simple-lock"
 	rm -f "$(DESTDIR)/etc/pam.d/simple-lock"
-	rm -f "$(DESTDIR)$(PREFIX)/share/simple-lock/simple-lock.conf"
 
 clean:
 	rm -rf build

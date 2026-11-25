@@ -9,10 +9,8 @@
 
 #include "config.h"
 
-enum {
-    LINE_MAX_LEN = 256,
-    FAIL_MS_MAX = 60000,
-};
+#define LINE_MAX_LEN 256
+#define FAIL_MS_MAX 60000
 
 static int parse_color(const char* text, uint32_t* out) {
     if (text[0] == '#') {
@@ -25,10 +23,12 @@ static int parse_color(const char* text, uint32_t* out) {
         return -1;
     }
 
-    char* end = NULL;
+    char* end_ptr;
+
     errno = 0;
-    unsigned long value = strtoul(text, &end, 16);
-    if (end == NULL || *end != '\0' || errno != 0 || value > 0xfffffful) {
+
+    unsigned long value = strtoul(text, &end_ptr, 16);
+    if (end_ptr == text || *end_ptr || errno != 0 || value > 0xfffffful) {
         return -1;
     }
 
@@ -63,14 +63,17 @@ static void apply_line(struct config* cfg, const char* path, int line, const cha
         } else {
             cfg->fail = color;
         }
+
         return;
     }
 
     if (strcmp(key, "fail_ms") == 0) {
-        char* end = NULL;
+        char* end_ptr;
+
         errno = 0;
-        long ms = strtol(value, &end, 10);
-        if (end == NULL || *end != '\0' || errno != 0 || ms < 1 || ms > FAIL_MS_MAX) {
+
+        long ms = strtol(value, &end_ptr, 10);
+        if (end_ptr == value || *end_ptr || errno != 0 || ms < 1 || ms > FAIL_MS_MAX) {
             warnx("%s:%d: bad fail_ms '%s'", path, line, value);
             return;
         }
@@ -101,7 +104,7 @@ static void apply_line(struct config* cfg, const char* path, int line, const cha
 }
 
 static int read_line(FILE* file, char* line, size_t size) {
-    if (fgets(line, (int) size, file) == NULL) {
+    if (!fgets(line, (int) size, file)) {
         return 0;
     }
 
@@ -110,8 +113,7 @@ static int read_line(FILE* file, char* line, size_t size) {
     }
 
     int ch = 0;
-    while ((ch = fgetc(file)) != EOF && ch != '\n') {
-    }
+    while ((ch = fgetc(file)) != EOF && ch != '\n') { }
 
     line[0] = '\0';
     errno = EMSGSIZE;
@@ -128,8 +130,8 @@ void config_defaults(struct config* cfg) {
 }
 
 int config_read(struct config* cfg, const char* path) {
-    FILE* file = fopen(path, "r");
-    if (!file) {
+    FILE* fp = fopen(path, "r");
+    if (!fp) {
         return -1;
     }
 
@@ -137,7 +139,7 @@ int config_read(struct config* cfg, const char* path) {
     int number = 0;
 
     for (;;) {
-        int got = read_line(file, line, sizeof(line));
+        int got = read_line(fp, line, sizeof(line));
         if (got == 0) {
             break;
         }
@@ -157,6 +159,7 @@ int config_read(struct config* cfg, const char* path) {
         while (*text == ' ' || *text == '\t') {
             text++;
         }
+
         if (*text == '\0' || *text == '#') {
             continue;
         }
@@ -171,19 +174,20 @@ int config_read(struct config* cfg, const char* path) {
         apply_line(cfg, path, number, key, value);
     }
 
-    fclose(file);
+    fclose(fp);
     return 0;
 }
 
 static int user_path(char* path, size_t size) {
     const char* xdg = getenv("XDG_CONFIG_HOME");
     const char* home = getenv("HOME");
+
     int wrote = 0;
 
-    if (xdg != NULL && xdg[0] != '\0') {
-        wrote = snprintf(path, size, "%s/simple-lock.conf", xdg);
-    } else if (home != NULL && home[0] != '\0') {
-        wrote = snprintf(path, size, "%s/.config/simple-lock.conf", home);
+    if (xdg && xdg[0] != '\0') {
+        wrote = snprintf(path, size, "%s/simple-lock/config", xdg);
+    } else if (home && home[0] != '\0') {
+        wrote = snprintf(path, size, "%s/.config/simple-lock/config", home);
     } else {
         return -1;
     }
@@ -210,7 +214,7 @@ static int read_optional(struct config* cfg, const char* path) {
 int config_load(struct config* cfg, const char* path) {
     config_defaults(cfg);
 
-    if (path != NULL) {
+    if (path) {
         if (config_read(cfg, path) < 0) {
             warn("cannot open '%s'", path);
             return -1;
@@ -224,6 +228,5 @@ int config_load(struct config* cfg, const char* path) {
         return 0;
     }
 
-    (void) read_optional(cfg, "/etc/simple-lock.conf");
     return 0;
 }

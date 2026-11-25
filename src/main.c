@@ -25,13 +25,11 @@
 #include "single-pixel-buffer-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 
-enum {
-    OUTPUT_MAX = 16,
-    SEAT_MAX = 4,
-    PASSWORD_MAX = 256,
-    KEYMAP_MAX = 1024 * 1024,
-    CLOCK_STORE_MAX = 4,
-};
+#define OUTPUT_MAX 16
+#define SEAT_MAX 4
+#define PASSWORD_MAX 256
+#define KEYMAP_MAX (1024 * 1024)
+#define CLOCK_STORE_MAX 4
 
 enum shade {
     SHADE_IDLE,
@@ -182,7 +180,7 @@ static void wipe_password(void) {
 }
 
 static void arm_timer(int fd, int delay_ms, int interval_ms) {
-    struct itimerspec spec = {0};
+    struct itimerspec spec = {};
 
     if (delay_ms > 0) {
         spec.it_value.tv_sec = delay_ms / 1000;
