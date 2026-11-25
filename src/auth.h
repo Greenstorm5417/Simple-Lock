@@ -1,3 +1,3 @@
 #pragma once
 
-int authenticate(const char* password, const char* service);
+int authenticate(const char* password);

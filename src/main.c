@@ -1095,15 +1095,17 @@ static void take_input(void) {
         submit = false;
         repeat_seat = NULL;
         repeat_down = false;
+
         if (repeat_fd >= 0) {
             arm_timer(repeat_fd, 0, 0);
         }
 
-        if (session_locked && authenticate(password, cfg.service) == 0) {
+        if (session_locked && authenticate(password) == 0) {
             want_unlock = true;
         } else if (session_locked) {
             show_fail();
         }
+
         wipe_password();
     }
 

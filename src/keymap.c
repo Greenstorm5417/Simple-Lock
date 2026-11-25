@@ -5,7 +5,6 @@
 
 #include <sys/mman.h>
 
-#include <dlfcn.h>
 #include <err.h>
 #include <stdint.h>
 #include <string.h>
@@ -38,52 +37,14 @@ struct key_table {
     char text[KEY_GROUP_MAX][KEY_LEVEL_MAX][KEY_CODE_MAX][KEY_UTF8_MAX];
 };
 
-typedef struct xkb_context* (*context_new_fn)(enum xkb_context_flags);
-typedef void (*context_unref_fn)(struct xkb_context*);
-typedef struct xkb_keymap* (*keymap_new_fn)(struct xkb_context*, const char*, size_t, enum xkb_keymap_format, enum xkb_keymap_compile_flags);
-typedef void (*keymap_unref_fn)(struct xkb_keymap*);
-typedef xkb_mod_index_t (*mod_index_fn)(struct xkb_keymap*, const char*);
-typedef xkb_layout_index_t (*num_layouts_fn)(struct xkb_keymap*);
-typedef struct xkb_state* (*state_new_fn)(struct xkb_keymap*);
-typedef void (*state_unref_fn)(struct xkb_state*);
-typedef enum xkb_state_component (*update_mask_fn)(struct xkb_state*, xkb_mod_mask_t, xkb_mod_mask_t, xkb_mod_mask_t, xkb_layout_index_t, xkb_layout_index_t, xkb_layout_index_t);
-typedef int (*key_utf8_fn)(struct xkb_state*, xkb_keycode_t, char*, size_t);
-typedef xkb_keysym_t (*key_sym_fn)(struct xkb_state*, xkb_keycode_t);
-
-struct xkb {
-    context_new_fn context_new;
-    context_unref_fn context_unref;
-    keymap_new_fn keymap_new;
-    keymap_unref_fn keymap_unref;
-    mod_index_fn mod_index;
-    num_layouts_fn num_layouts;
-    state_new_fn state_new;
-    state_unref_fn state_unref;
-    update_mask_fn update_mask;
-    key_utf8_fn key_utf8;
-    key_sym_fn key_sym;
-};
-
 static const xkb_mod_mask_t depressed_bit[LEVEL_BLOCK] = { 0, 1, 0, 1, 2, 3 };
 static const xkb_mod_mask_t locked_bit[LEVEL_BLOCK] = { 0, 0, 1, 1, 0, 0 };
 
 alignas(4096)
 static struct key_table live;
 
-static bool load_fn(void* handle, const char* name, void* dest) {
-    void* sym = dlsym(handle, name);
-    if (!sym) {
-        warnx("dlsym %s", name);
-        return false;
-    }
-
-    memcpy(dest, &sym, sizeof(sym));
-
-    return true;
-}
-
-static uint32_t mask_mod(struct xkb* api, struct xkb_keymap* map, const char* name) {
-    xkb_mod_index_t index = api->mod_index(map, name);
+static inline uint32_t mask_mod(struct xkb_keymap* map, const char* name) {
+    xkb_mod_index_t index = xkb_keymap_mod_get_index(map, name);
     if (index == XKB_MOD_INVALID || index >= 32) {
         return 0;
     }
@@ -149,56 +110,7 @@ static int choose_level(const struct key_table* table, uint32_t depressed, uint3
     return level;
 }
 
-static bool load_xkb(void* handle, struct xkb* api) {
-    if (!load_fn(handle, "xkb_context_new", &api->context_new)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_context_unref", &api->context_unref)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_keymap_new_from_buffer", &api->keymap_new)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_keymap_unref", &api->keymap_unref)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_keymap_mod_get_index", &api->mod_index)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_keymap_num_layouts", &api->num_layouts)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_state_new", &api->state_new)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_state_unref", &api->state_unref)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_state_update_mask", &api->update_mask)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_state_key_get_utf8", &api->key_utf8)) {
-        return false;
-    }
-
-    if (!load_fn(handle, "xkb_state_key_get_one_sym", &api->key_sym)) {
-        return false;
-    }
-
-    return true;
-}
-
 int keys_load(const char* text, size_t size) {
-    struct xkb api = {};
     struct xkb_context* ctx = NULL;
     struct xkb_keymap* map = NULL;
     struct xkb_state* st = NULL;
@@ -206,29 +118,19 @@ int keys_load(const char* text, size_t size) {
 
     int ret = -1;
 
-    void* so = dlopen("libxkbcommon.so.0", RTLD_NOW | RTLD_LOCAL);
-    if (!so) {
-        warnx("%s", dlerror());
-        return -1;
-    }
-
-    if (!load_xkb(so, &api)) {
-        goto end;
-    }
-
-    ctx = api.context_new(XKB_CONTEXT_NO_FLAGS);
+    ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     if (!ctx) {
         warnx("xkb_context_new");
         goto end;
     }
 
-    map = api.keymap_new(ctx, text, size, XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    map = xkb_keymap_new_from_buffer(ctx, text, size, XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS);
     if (!map) {
         warnx("xkb_keymap_new_from_buffer");
         goto end;
     }
 
-    st = api.state_new(map);
+    st = xkb_state_new(map);
     if (!st) {
         warnx("xkb_state_new");
         goto end;
@@ -240,13 +142,13 @@ int keys_load(const char* text, size_t size) {
         goto end;
     }
 
-    scratch->shift = mask_mod(&api, map, XKB_MOD_NAME_SHIFT);
-    scratch->lock = mask_mod(&api, map, XKB_MOD_NAME_CAPS);
-    scratch->control = mask_mod(&api, map, XKB_MOD_NAME_CTRL);
-    scratch->level3 = mask_mod(&api, map, XKB_MOD_NAME_MOD5);
-    scratch->num = mask_mod(&api, map, XKB_MOD_NAME_NUM);
+    scratch->shift = mask_mod(map, XKB_MOD_NAME_SHIFT);
+    scratch->lock = mask_mod(map, XKB_MOD_NAME_CAPS);
+    scratch->control = mask_mod(map, XKB_MOD_NAME_CTRL);
+    scratch->level3 = mask_mod(map, XKB_MOD_NAME_MOD5);
+    scratch->num = mask_mod(map, XKB_MOD_NAME_NUM);
 
-    xkb_layout_index_t layouts = api.num_layouts(map);
+    xkb_layout_index_t layouts = xkb_keymap_num_layouts(map);
     if (layouts == 0) {
         layouts = 1;
     }
@@ -271,17 +173,17 @@ int keys_load(const char* text, size_t size) {
                     locked |= scratch->lock;
                 }
 
-                api.update_mask(st, depressed, 0, locked, 0, 0, group);
+                xkb_state_update_mask(st, depressed, 0, locked, 0, 0, group);
 
                 char buf[8];
-                int written = api.key_utf8(st, code, buf, sizeof(buf));
+                int written = xkb_state_key_get_utf8(st, code, buf, sizeof(buf));
                 if (written > 0 && written <= KEY_UTF8_MAX && (unsigned char) buf[0] >= 0x20) {
                     scratch->len[group][level][code] = (uint8_t) written;
                     memcpy(scratch->text[group][level][code], buf, (size_t) written);
                 }
 
-                api.update_mask(st, depressed, 0, locked | scratch->num, 0, 0, group);
-                written = api.key_utf8(st, code, buf, sizeof(buf));
+                xkb_state_update_mask(st, depressed, 0, locked | scratch->num, 0, 0, group);
+                written = xkb_state_key_get_utf8(st, code, buf, sizeof(buf));
                 if (written > 0 && written <= KEY_UTF8_MAX && (unsigned char) buf[0] >= 0x20) {
                     scratch->len[group][level + LEVEL_BLOCK][code] = (uint8_t) written;
                     memcpy(scratch->text[group][level + LEVEL_BLOCK][code], buf, (size_t) written);
@@ -290,9 +192,9 @@ int keys_load(const char* text, size_t size) {
         }
     }
 
-    api.update_mask(st, 0, 0, 0, 0, 0, 0);
+    xkb_state_update_mask(st, 0, 0, 0, 0, 0, 0);
     for (uint32_t code = 0; code < KEY_CODE_MAX; code++) {
-        uint8_t kind = classify_sym(api.key_sym(st, code));
+        uint8_t kind = classify_sym(xkb_state_key_get_one_sym(st, code));
         if (kind == KEY_KIND_NONE) {
             for (xkb_layout_index_t group = 0; group < layouts; group++) {
                 for (int level = 0; level < KEY_LEVEL_MAX; level++) {
@@ -317,15 +219,15 @@ int keys_load(const char* text, size_t size) {
 
 end:
     if (st) {
-        api.state_unref(st);
+        xkb_state_unref(st);
     }
     if (map) {
-        api.keymap_unref(map);
+        xkb_keymap_unref(map);
     }
     if (ctx) {
-        api.context_unref(ctx);
+        xkb_context_unref(ctx);
     }
-    dlclose(so);
+
     drop_scratch(scratch);
     return ret;
 }

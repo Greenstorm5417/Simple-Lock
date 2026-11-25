@@ -12,41 +12,12 @@
 #define LINE_MAX_LEN 256
 #define FAIL_MS_MAX 60000
 
-static int parse_color(const char* text, uint32_t* out) {
-    if (text[0] == '#') {
-        text++;
-    } else if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
-        text += 2;
-    }
-
-    if (strlen(text) != 6) {
-        return -1;
-    }
-
-    char* end_ptr;
-
-    errno = 0;
-
-    unsigned long value = strtoul(text, &end_ptr, 16);
-    if (end_ptr == text || *end_ptr || errno != 0 || value > 0xfffffful) {
-        return -1;
-    }
-
-    *out = (uint32_t) value;
-    return 0;
-}
-
-static int parse_service(const char* text, char* out) {
-    size_t length = strlen(text);
-    static const char allowed[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-.";
-
-    if (length == 0 || length >= SERVICE_MAX || strspn(text, allowed) != length) {
-        return -1;
-    }
-
-    memcpy(out, text, length + 1);
-    return 0;
-}
+static void apply_line(struct config* cfg, const char* path, int line, const char* key, const char* value);
+static int parse_color(const char* text, uint32_t* out);
+static int read_config(struct config* cfg, const char* path);
+static int read_line(FILE* file, char* line, size_t size);
+static int read_optional(struct config* cfg, const char* path);
+static int user_path(char* path, size_t size);
 
 static void apply_line(struct config* cfg, const char* path, int line, const char* key, const char* value) {
     if (strcmp(key, "idle") == 0 || strcmp(key, "input") == 0 || strcmp(key, "fail") == 0) {
@@ -104,44 +75,34 @@ static void apply_line(struct config* cfg, const char* path, int line, const cha
         return;
     }
 
-    if (strcmp(key, "service") == 0) {
-        if (parse_service(value, cfg->service) < 0) {
-            warnx("%s:%d: bad service '%s'", path, line, value);
-        }
-        return;
-    }
-
     warnx("%s:%d: unknown key '%s'", path, line, key);
 }
 
-static int read_line(FILE* file, char* line, size_t size) {
-    if (!fgets(line, (int) size, file)) {
-        return 0;
+static int parse_color(const char* text, uint32_t* out) {
+    if (text[0] == '#') {
+        text++;
+    } else if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        text += 2;
     }
 
-    if (strchr(line, '\n') != NULL || feof(file)) {
-        return 1;
+    if (strlen(text) != 6) {
+        return -1;
     }
 
-    int ch = 0;
-    while ((ch = fgetc(file)) != EOF && ch != '\n') { }
+    char* end_ptr;
 
-    line[0] = '\0';
-    errno = EMSGSIZE;
-    return -1;
+    errno = 0;
+
+    unsigned long value = strtoul(text, &end_ptr, 16);
+    if (end_ptr == text || *end_ptr || errno != 0 || value > UINT32_MAX) {
+        return -1;
+    }
+
+    *out = (uint32_t) value;
+    return 0;
 }
 
-void config_defaults(struct config* cfg) {
-    cfg->idle = 0x000000u;
-    cfg->input = 0x005577u;
-    cfg->fail = 0xCC3333u;
-    cfg->fail_ms = 1000;
-    cfg->clock = true;
-    cfg->hours12 = false;
-    memcpy(cfg->service, "kisslock", 9);
-}
-
-int config_read(struct config* cfg, const char* path) {
+static int read_config(struct config* cfg, const char* path) {
     FILE* fp = fopen(path, "r");
     if (!fp) {
         return -1;
@@ -176,9 +137,8 @@ int config_read(struct config* cfg, const char* path) {
             continue;
         }
 
-        char key[32];
-        char value[SERVICE_MAX];
-        if (sscanf(text, "%31s %63s", key, value) != 2) {
+        char key[32], value[32];
+        if (sscanf(text, "%31s %31s", key, value) != 2) {
             warnx("%s:%d: expected a key and a value", path, number);
             continue;
         }
@@ -188,6 +148,35 @@ int config_read(struct config* cfg, const char* path) {
 
     fclose(fp);
     return 0;
+}
+
+static int read_line(FILE* file, char* line, size_t size) {
+    if (!fgets(line, (int) size, file)) {
+        return 0;
+    }
+
+    if (strchr(line, '\n') != NULL || feof(file)) {
+        return 1;
+    }
+
+    int ch = 0;
+    while ((ch = fgetc(file)) != EOF && ch != '\n') {}
+
+    line[0] = '\0';
+    errno = EMSGSIZE;
+    return -1;
+}
+
+static int read_optional(struct config* cfg, const char* path) {
+    if (read_config(cfg, path) == 0) {
+        return 0;
+    }
+
+    if (errno != ENOENT) {
+        warn("cannot open '%s'", path);
+    }
+
+    return -1;
 }
 
 static int user_path(char* path, size_t size) {
@@ -211,23 +200,20 @@ static int user_path(char* path, size_t size) {
     return 0;
 }
 
-static int read_optional(struct config* cfg, const char* path) {
-    if (config_read(cfg, path) == 0) {
-        return 0;
-    }
-
-    if (errno != ENOENT) {
-        warn("cannot open '%s'", path);
-    }
-
-    return -1;
+void config_defaults(struct config* cfg) {
+    cfg->idle = 0x000000u;
+    cfg->input = 0x005577u;
+    cfg->fail = 0xCC3333u;
+    cfg->fail_ms = 1000;
+    cfg->clock = true;
+    cfg->hours12 = false;
 }
 
 int config_load(struct config* cfg, const char* path) {
     config_defaults(cfg);
 
     if (path) {
-        if (config_read(cfg, path) < 0) {
+        if (read_config(cfg, path) < 0) {
             warn("cannot open '%s'", path);
             return -1;
         }

@@ -73,7 +73,7 @@ static int converse(int count, const struct pam_message** messages, struct pam_r
     return PAM_SUCCESS;
 }
 
-int authenticate(const char* password, const char* service) {
+int authenticate(const char* password) {
     struct passwd* pw = getpwuid(getuid());
     if (!pw || !pw->pw_name || pw->pw_name[0] == '\0') {
         warnx("getpwuid");
@@ -87,17 +87,17 @@ int authenticate(const char* password, const char* service) {
     }
 
     char user[LOGIN_NAME_MAX];
-
     memcpy(user, pw->pw_name, length + 1);
 
     struct pam_conv conv = {
         .conv = converse,
         .appdata_ptr = (void*) password,
     };
+
     pam_handle_t* pam = NULL;
     int ret = -1;
 
-    int status = pam_start(service, user, &conv, &pam);
+    int status = pam_start("kisslock", user, &conv, &pam);
     if (status != PAM_SUCCESS) {
         warnx("pam_start failed: %s (PAM status %d)", pam_strerror(pam, status), status);
         goto end;
@@ -121,6 +121,7 @@ int authenticate(const char* password, const char* service) {
         if (status != PAM_AUTH_ERR && status != PAM_PERM_DENIED) {
             warnx("pam_acct_mgmt failed: %s (PAM status %d)", pam_strerror(pam, status), status);
         }
+
         goto end;
     }
 
@@ -130,6 +131,7 @@ end:
     if (pam) {
         pam_end(pam, status);
     }
+
     explicit_bzero(user, sizeof(user));
     return ret;
 }

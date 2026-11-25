@@ -10,11 +10,10 @@ WAYLAND_SCANNER := $(shell $(PKG_CONFIG) --variable=wayland_scanner wayland-scan
 CFLAGS = -O2 -std=c23 -Wall -Wextra -pedantic \
 	-Wnested-externs -Wold-style-definition -Wredundant-decls \
 	-Wshadow -Wstrict-prototypes -Wvla \
-	-ffunction-sections -fdata-sections \
-	$(shell $(PKG_CONFIG) --cflags wayland-client xkbcommon)
+	-ffunction-sections -fdata-sections
 LDFLAGS = -Wl,--gc-sections
-CPPFLAGS = $(shell $(PKG_CONFIG) --cflags wayland-client pam)
-LDLIBS += $(shell $(PKG_CONFIG) --libs wayland-client pam) -ldl
+CPPFLAGS = $(shell $(PKG_CONFIG) --cflags wayland-client pam xkbcommon)
+LDLIBS += $(shell $(PKG_CONFIG) --libs wayland-client pam xkbcommon)
 
 PROTO_DIR = build/protocol
 LOCK_XML = $(WAYLAND_PROTOCOLS)/staging/ext-session-lock/ext-session-lock-v1.xml
