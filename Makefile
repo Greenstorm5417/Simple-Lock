@@ -65,7 +65,7 @@ $(PIXEL_C): $(PIXEL_XML)
 
 install: build/kisslock
 	install -Dm755 build/kisslock "$(DESTDIR)$(BINDIR)/kisslock"
-	install -Dm644 pam.d/kisslock "$(DESTDIR)/etc/pam.d/kisslock"
+	install -Dm644 pam/kisslock "$(DESTDIR)/etc/pam.d/kisslock"
 
 uninstall:
 	$(RM) "$(DESTDIR)$(BINDIR)/kisslock"
