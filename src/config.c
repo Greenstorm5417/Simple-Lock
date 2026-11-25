@@ -93,6 +93,17 @@ static void apply_line(struct config* cfg, const char* path, int line, const cha
         return;
     }
 
+    if (strcmp(key, "hours") == 0) {
+        if (strcmp(value, "12") == 0 || strcmp(value, "ampm") == 0 || strcmp(value, "12h") == 0) {
+            cfg->hours12 = true;
+        } else if (strcmp(value, "24") == 0 || strcmp(value, "24h") == 0) {
+            cfg->hours12 = false;
+        } else {
+            warnx("%s:%d: bad hours '%s'", path, line, value);
+        }
+        return;
+    }
+
     if (strcmp(key, "service") == 0) {
         if (parse_service(value, cfg->service) < 0) {
             warnx("%s:%d: bad service '%s'", path, line, value);
@@ -126,6 +137,7 @@ void config_defaults(struct config* cfg) {
     cfg->fail = 0xCC3333u;
     cfg->fail_ms = 1000;
     cfg->clock = true;
+    cfg->hours12 = false;
     memcpy(cfg->service, "simple-lock", sizeof("simple-lock"));
 }
 

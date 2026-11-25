@@ -6,7 +6,7 @@ It is a Wayland client of `ext-session-lock-v1`, the session lock protocol wlroo
 
 The screen is black when idle, `#005577` while a password is being typed, and `#CC3333` for a second after a failed attempt. Enter submits the password. Backspace deletes one character. Escape, Ctrl-u, and Ctrl-Backspace clear it. Enter on an empty password is ignored.
 
-A clock is drawn at the top of each output. `clock off` in the config file hides it. `clock on` is the default.
+A clock is drawn at the top of each output. `clock off` in the config file hides it. `clock on` is the default. `hours 24` prints 00-23. `hours 12` prints AM/PM.
 
 Those colors, the fail timeout, the clock, and the PAM service name come from a config file when one is present. `simple-lock -c file` reads that file. With no `-c`, it reads `$XDG_CONFIG_HOME/simple-lock/config`, or `~/.config/simple-lock/config`. A missing file keeps the defaults above. A bad line is skipped. See `example.conf`.
 
