@@ -1193,22 +1193,33 @@ static void cleanup(void) {
     }
 }
 
-static void usage(void) {
-    fprintf(stderr, "usage: kisslock [-c file]\n");
-    exit(EXIT_FAILURE);
+static void usage(int ret) {
+    fprintf(stderr, "usage: kisslock [-hv] [-c file]\n");
+    exit(ret);
+}
+
+static void version(void) {
+    printf("kisslock %s\n", KISSLOCK_VERSION);
+    exit(EXIT_SUCCESS);
 }
 
 int main(int argc, char* argv[]) {
     const char* config_path = NULL;
 
     int c;
-    while ((c = getopt(argc, argv, "c:")) != -1) {
+    while ((c = getopt(argc, argv, "c:hv")) != -1) {
         switch (c) {
             case 'c':
                 config_path = optarg;
                 break;
+            case 'h':
+                usage(EXIT_SUCCESS);
+                break;
+            case 'v':
+                version();
+                break;
             default:
-                usage();
+                usage(EXIT_FAILURE);
         }
     }
 
@@ -1217,7 +1228,7 @@ int main(int argc, char* argv[]) {
 
     if (argc > 0) {
         warnx("extra operand '%s'", argv[0]);
-        usage();
+        usage(EXIT_FAILURE);
     }
 
     if (config_load(&config, config_path) < 0) {

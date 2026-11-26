@@ -1,0 +1,135 @@
+.TH KISSLOCK "1" "November 2026" "kisslock" "User Commands"
+
+.SH NAME
+kisslock \- an ultra-simple screen locker for Wayland
+
+.SH SYNOPSIS
+.PP
+\fIkisslock\fR [OPTIONS...]
+.PP
+Locks your Wayland session.
+.PP
+
+.SH OPTIONS
+.TP
+.BI \-c " CONFIG"
+Read configuration from
+.I CONFIG
+instead of the default configuration file.
+.TP
+.B -h
+Display a help message and exit.
+.TP
+.B -v
+Display the version and exit.
+
+.SH CONFIGURATION
+.B kisslock
+reads its configuration from
+.IR $XDG_CONFIG_HOME/kisslock/config .
+If
+.B XDG_CONFIG_HOME
+is unset or empty, it uses
+.IR ~/.config/kisslock/config .
+The configuration file is optional. If it does not exist, built-in defaults are used.
+
+Each setting consists of a key followed by a value, separated by whitespace. Blank lines and lines beginning with
+.B #
+are ignored. Unknown keys and invalid values produce a warning and are ignored.
+
+.TP
+.B idle
+The background color displayed while the locker is idle.
+
+.TP
+.B input
+The background color displayed while input is being entered.
+
+.TP
+.B fail
+The background color displayed after an unsuccessful authentication attempt.
+
+.RS
+Colors must be specified as six hexadecimal digits in
+.I RRGGBB
+format. A leading
+.B #
+or
+.B 0x
+is also accepted.
+.RE
+
+.TP
+.B fail_ms
+The duration, in milliseconds, for which the failure color is displayed after an unsuccessful authentication attempt. Valid values are between 1 and 60000.
+
+.TP
+.B clock
+Whether to display the clock at the top of the lock screen. Accepted values are
+.BR on ,
+.BR yes ,
+.BR 1 ,
+.BR off ,
+.BR no ,
+and
+.BR 0 .
+
+.TP
+.B hours
+The clock's hour format. Accepted values are
+.BR 12 ,
+.BR ampm ,
+or
+.BR 12h
+for 12-hour time, and
+.BR 24
+or
+.B 24h
+for 24-hour time.
+
+.SS Defaults
+If a setting is omitted, its built-in default is used:
+
+.nf
+idle     000000
+input    005577
+fail     CC3333
+fail_ms  1000
+clock    on
+hours    24
+.fi
+
+.SS Example
+.nf
+# Colors are RRGGBB. A leading # or 0x is accepted.
+idle 000000
+input 005577
+fail CC3333
+
+# How long the fail color stays up, in milliseconds.
+fail_ms 1000
+
+# Display the clock.
+clock on
+
+# Use 24-hour time.
+hours 24
+.fi
+
+.SH ENVIRONMENT
+.TP
+.B XDG_CONFIG_HOME
+Specifies the base directory for user-specific configuration files. If unset or empty,
+.B kisslock
+uses
+.IR ~/.config
+instead.
+
+.SH AUTHORS
+Written by Greenstorm5417 and ImaNimrod.
+
+.SH REPORTING BUGS
+Report bugs at: <https://github.com/Greenstorm5417/kisslock/issues>
+
+.SH SEE ALSO
+\fBwayland\fP(7)
