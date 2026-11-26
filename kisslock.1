@@ -12,16 +12,18 @@ Locks your Wayland session.
 
 .SH OPTIONS
 .TP
-.BI \-c " CONFIG"
+.BR \-c ", " \-\-config " " CONFIG
 Read configuration from
 .I CONFIG
 instead of the default configuration file.
+
 .TP
-.B -h
+.BR \-h ", " \-\-help
 Display a help message and exit.
+
 .TP
-.B -v
-Display the version and exit.
+.BR \-v ", " \-\-version
+Display version information and exit.
 
 .SH CONFIGURATION
 .B kisslock
@@ -124,6 +126,12 @@ Specifies the base directory for user-specific configuration files. If unset or 
 uses
 .IR ~/.config
 instead.
+
+.SH SIGNALS
+
+.TP
+.B SIGUSR1
+Unlocks the screen and exits, bypassing password authentication.
 
 .SH AUTHORS
 Written by Greenstorm5417 and ImaNimrod.

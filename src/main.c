@@ -8,6 +8,7 @@
 
 #include <err.h>
 #include <errno.h>
+#include <getopt.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -134,6 +135,8 @@ static bool submit;
 static bool want_unlock;
 static int exit_status = EXIT_SUCCESS;
 
+static volatile sig_atomic_t want_force_unlock;
+
 static int repeat_fd = -1;
 static int fail_fd = -1;
 static int clock_fd = -1;
@@ -205,13 +208,40 @@ static void arm_timer(int fd, int delay_ms, int interval_ms) {
 
 static void drain_timer(int fd) {
     uint64_t expirations;
+
     ssize_t nread = read(fd, &expirations, sizeof(expirations));
     if (nread < 0 && errno != EAGAIN) {
         err(EXIT_FAILURE, "read");
     }
 }
 
-static void ignore_signals(void) {
+static void force_unlock(void) {
+    if (!want_force_unlock) {
+        return;
+    }
+
+    want_force_unlock = 0;
+
+    if (session_lock && session_locked) {
+        ext_session_lock_v1_unlock_and_destroy(session_lock);
+        session_lock = NULL;
+        session_locked = false;
+
+        if (wl_display_roundtrip(display) < 0) {
+            warn("wl_display_roundtrip");
+            exit_status = EXIT_FAILURE;
+        }
+    }
+
+    stop = true;
+}
+
+static void handle_sigusr1(int signo) {
+    (void) signo;
+    want_force_unlock = 1;
+}
+
+static void install_signals(void) {
     struct sigaction sa = { .sa_handler = SIG_IGN, .sa_flags = 0 };
 
     sigemptyset(&sa.sa_mask);
@@ -222,6 +252,12 @@ static void ignore_signals(void) {
         if (sigaction(ignored[i], &sa, NULL) < 0) {
             err(EXIT_FAILURE, "sigaction");
         }
+    }
+
+    sa.sa_handler = handle_sigusr1;
+
+    if (sigaction(SIGUSR1, &sa, NULL) < 0) {
+        err(EXIT_FAILURE, "sigaction");
     }
 }
 
@@ -823,6 +859,7 @@ static void handle_keyboard_leave(void* data, struct wl_keyboard* keyboard, uint
     if (repeat_seat == seat) {
         repeat_seat = NULL;
         repeat_down = false;
+
         if (repeat_fd >= 0) {
             arm_timer(repeat_fd, 0, 0);
         }
@@ -858,12 +895,14 @@ static void handle_keyboard_key(void* data, struct wl_keyboard* keyboard, uint32
         if (interval < 1) {
             interval = 1;
         }
+
         arm_timer(repeat_fd, seat->repeat_delay, interval);
         return;
     }
 
     repeat_seat = NULL;
     repeat_down = false;
+
     if (repeat_fd >= 0) {
         arm_timer(repeat_fd, 0, 0);
     }
@@ -961,6 +1000,7 @@ static void add_output(struct wl_registry* source, uint32_t name, uint32_t versi
             break;
         }
     }
+
     if (!out) {
         warnx("ignoring output above the limit of %d", OUTPUT_MAX);
         return;
@@ -974,6 +1014,7 @@ static void add_output(struct wl_registry* source, uint32_t name, uint32_t versi
     }
 
     out->name = name;
+
     wl_output_add_listener(out->output, &output_listener, out);
     if (session_lock) {
         map_output(out);
@@ -989,6 +1030,7 @@ static void add_seat(struct wl_registry* source, uint32_t name, uint32_t version
             break;
         }
     }
+
     if (!seat) {
         warnx("ignoring seat above the limit of %d", SEAT_MAX);
         return;
@@ -1092,6 +1134,7 @@ static int flush_display(void) {
             if (errno == EINTR) {
                 continue;
             }
+
             return -1;
         }
     }
@@ -1118,13 +1161,16 @@ static void take_input(void) {
 
     if (want_unlock && session_lock && session_locked) {
         ext_session_lock_v1_unlock_and_destroy(session_lock);
+
         session_lock = NULL;
         session_locked = false;
         want_unlock = false;
+
         if (wl_display_roundtrip(display) < 0) {
             warn("wl_display_roundtrip");
             exit_status = EXIT_FAILURE;
         }
+
         stop = true;
     }
 }
@@ -1137,6 +1183,7 @@ static void cleanup(void) {
             destroy_output(&outputs[i]);
         }
     }
+
     for (int i = 0; i < SEAT_MAX; i++) {
         if (seats[i].seat) {
             destroy_seat(&seats[i]);
@@ -1194,7 +1241,14 @@ static void cleanup(void) {
 }
 
 static void usage(int ret) {
-    fprintf(stderr, "usage: kisslock [-hv] [-c file]\n");
+    fprintf(ret == EXIT_SUCCESS ? stdout : stderr,
+            "Usage: kisslock [OPTIONS]\n"
+            "\n"
+            "Options:\n"
+            "  -c, --config CONFIG  Use the specified configuration file\n"
+            "  -h, --help           Display this help and exit\n"
+            "  -v, --version        Display version information and exit\n");
+
     exit(ret);
 }
 
@@ -1204,10 +1258,17 @@ static void version(void) {
 }
 
 int main(int argc, char* argv[]) {
+    static const struct option long_options[] = {
+        { "config",  required_argument, NULL, 'c' },
+        { "help",    no_argument,       NULL, 'h' },
+        { "version", no_argument,       NULL, 'v' },
+        { NULL,      0,                 NULL,  0  }
+    };
+
     const char* config_path = NULL;
 
     int c;
-    while ((c = getopt(argc, argv, "c:hv")) != -1) {
+    while ((c = getopt_long(argc, argv, "c:hv", long_options, NULL)) != -1) {
         switch (c) {
             case 'c':
                 config_path = optarg;
@@ -1247,8 +1308,7 @@ int main(int argc, char* argv[]) {
     // Unprivileged sessions often cannot lock memory.
     (void) mlock(password, sizeof(password));
 
-    // Dying while locked leaves the session locked, so these are ignored.
-    ignore_signals();
+    install_signals();
 
     repeat_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     if (repeat_fd < 0) {
@@ -1379,11 +1439,18 @@ int main(int argc, char* argv[]) {
 
         int ready = poll(pfds, nfds, -1);
         if (ready < 0) {
+            int saved_errno = errno;
             wl_display_cancel_read(display);
-            if (errno == EINTR) {
+
+            if (saved_errno == EINTR) {
+                force_unlock();
+                if (stop) {
+                    break;
+                }
                 continue;
             }
 
+            errno = saved_errno;
             warn("poll");
             exit_status = EXIT_FAILURE;
             break;
@@ -1399,16 +1466,24 @@ int main(int argc, char* argv[]) {
             wl_display_cancel_read(display);
         }
 
+        force_unlock();
+
+        if (stop) {
+            break;
+        }
+
         if (pfds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
             warnx("wayland display disconnected");
             exit_status = EXIT_FAILURE;
             stop = true;
+            break;
         }
 
         if (!stop && wl_display_dispatch_pending(display) < 0) {
             warn("wl_display_dispatch_pending");
             exit_status = EXIT_FAILURE;
             stop = true;
+            break;
         }
 
         if (pfds[1].revents & POLLIN) {
@@ -1429,6 +1504,7 @@ int main(int argc, char* argv[]) {
         }
 
         take_input();
+
         if (stop) {
             break;
         }
