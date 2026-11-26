@@ -43,12 +43,16 @@ struct output {
     struct ext_session_lock_surface_v1* lock_surface;
     struct wp_viewport* viewport;
     struct wl_buffer* buffer;
+
     uint32_t name;
     uint32_t serial;
+
     int32_t width;
     int32_t height;
+
     bool configured;
     bool ack;
+
     struct wl_surface* clock_surface;
     struct wl_subsurface* clock_sub;
     struct wp_viewport* clock_viewport;
@@ -63,22 +67,29 @@ struct clock_store {
     int scale;
     int width;
     int height;
+
     size_t size;
     uint32_t* pixels;
+
     struct wl_shm_pool* pool;
+
     int users;
 };
 
 struct seat {
     struct wl_seat* seat;
     struct wl_keyboard* keyboard;
+
     uint32_t name;
     uint32_t version;
+
     int32_t repeat_rate;
     int32_t repeat_delay;
+
     uint32_t depressed;
     uint32_t latched;
     uint32_t locked_mods;
+
     uint32_t group;
 };
 
@@ -113,7 +124,7 @@ static bool shm_argb;
 static struct output outputs[OUTPUT_MAX];
 static struct seat seats[SEAT_MAX];
 
-static struct config cfg;
+static struct config config;
 static char password[PASSWORD_MAX];
 static size_t password_len;
 static enum shade shade = SHADE_IDLE;
@@ -169,11 +180,6 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = handle_registry_remove,
 };
 
-static void usage(void) {
-    fprintf(stderr, "usage: kisslock [-c file]\n");
-    exit(EXIT_FAILURE);
-}
-
 static void wipe_password(void) {
     password_len = 0;
     explicit_bzero(password, sizeof(password));
@@ -186,6 +192,7 @@ static void arm_timer(int fd, int delay_ms, int interval_ms) {
         spec.it_value.tv_sec = delay_ms / 1000;
         spec.it_value.tv_nsec = (delay_ms % 1000) * 1000000L;
     }
+
     if (interval_ms > 0) {
         spec.it_interval.tv_sec = interval_ms / 1000;
         spec.it_interval.tv_nsec = (interval_ms % 1000) * 1000000L;
@@ -288,7 +295,7 @@ static void release_clock_store(int scale) {
 
 static int clock_scale_for(const struct output* out) {
     int scale = out->height / (CLOCK_H * 12);
-    int width_limit = out->width > 32 ? (out->width - 32) / clock_cols(cfg.hours12) : 1;
+    int width_limit = out->width > 32 ? (out->width - 32) / clock_cols(config.hours12) : 1;
     int height_limit = out->height / CLOCK_H;
 
     if (scale < 6) {
@@ -367,7 +374,7 @@ static struct clock_store* take_clock_store(int scale) {
         return NULL;
     }
 
-    int width = clock_cols(cfg.hours12) * scale;
+    int width = clock_cols(config.hours12) * scale;
     int height = CLOCK_H * scale;
     size_t size = (size_t) width * (size_t) height * sizeof(uint32_t);
     if (size > (size_t) INT32_MAX) {
@@ -451,7 +458,7 @@ static bool ensure_clock_buffer(struct output* out, int scale) {
 }
 
 static void place_clock(struct output* out) {
-    if (!cfg.clock || !shm_argb || !ensure_clock(out)) {
+    if (!config.clock || !shm_argb || !ensure_clock(out)) {
         return;
     }
 
@@ -461,8 +468,8 @@ static void place_clock(struct output* out) {
     }
 
     char text[CLOCK_TEXT];
-    clock_stamp(text, cfg.hours12);
-    int dest_w = clock_cols(cfg.hours12) * scale;
+    clock_stamp(text, config.hours12);
+    int dest_w = clock_cols(config.hours12) * scale;
     int dest_h = CLOCK_H * scale;
     clock_draw(out->clock_pixels, dest_w, scale, text);
 
@@ -487,7 +494,7 @@ static void place_clock(struct output* out) {
 
 static void refresh_clocks(void) {
     char text[CLOCK_TEXT];
-    clock_stamp(text, cfg.hours12);
+    clock_stamp(text, config.hours12);
 
     for (int i = 0; i < CLOCK_STORE_MAX; i++) {
         struct clock_store* store = &clock_stores[i];
@@ -526,12 +533,12 @@ static void present(struct output* out) {
 
     wp_viewport_set_destination(out->viewport, out->width, out->height);
 
-    uint32_t rgb = cfg.idle;
+    uint32_t rgb = config.idle;
 
     if (shade == SHADE_INPUT) {
-        rgb = cfg.input;
+        rgb = config.input;
     } else if (shade == SHADE_FAIL) {
-        rgb = cfg.fail;
+        rgb = config.fail;
     }
 
     uint32_t red = ((rgb >> 16) & 0xffu) * 0x01010101u;
@@ -581,7 +588,7 @@ static void show_fail(void) {
     present_all();
 
     if (fail_fd >= 0) {
-        arm_timer(fail_fd, cfg.fail_ms, 0);
+        arm_timer(fail_fd, config.fail_ms, 0);
     }
 }
 
@@ -1033,14 +1040,14 @@ static void handle_registry(void* data, struct wl_registry* source, uint32_t nam
         if (!single_pixel) {
             single_pixel = wl_registry_bind(source, name, &wp_single_pixel_buffer_manager_v1_interface, 1);
         }
-    } else if (cfg.clock && strcmp(interface, wl_shm_interface.name) == 0) {
+    } else if (config.clock && strcmp(interface, wl_shm_interface.name) == 0) {
         if (!shm) {
             shm = wl_registry_bind(source, name, &wl_shm_interface, 1);
             if (shm) {
                 wl_shm_add_listener(shm, &shm_listener, NULL);
             }
         }
-    } else if (cfg.clock && strcmp(interface, wl_subcompositor_interface.name) == 0) {
+    } else if (config.clock && strcmp(interface, wl_subcompositor_interface.name) == 0) {
         if (!subcompositor) {
             subcompositor = wl_registry_bind(source, name, &wl_subcompositor_interface, 1);
         }
@@ -1186,12 +1193,17 @@ static void cleanup(void) {
     }
 }
 
+static void usage(void) {
+    fprintf(stderr, "usage: kisslock [-c file]\n");
+    exit(EXIT_FAILURE);
+}
+
 int main(int argc, char* argv[]) {
     const char* config_path = NULL;
-    int opt = 0;
 
-    while ((opt = getopt(argc, argv, "c:")) != -1) {
-        switch (opt) {
+    int c;
+    while ((c = getopt(argc, argv, "c:")) != -1) {
+        switch (c) {
             case 'c':
                 config_path = optarg;
                 break;
@@ -1208,7 +1220,7 @@ int main(int argc, char* argv[]) {
         usage();
     }
 
-    if (config_load(&cfg, config_path) < 0) {
+    if (config_load(&config, config_path) < 0) {
         return EXIT_FAILURE;
     }
 
@@ -1241,7 +1253,7 @@ int main(int argc, char* argv[]) {
         goto end;
     }
 
-    if (cfg.clock) {
+    if (config.clock) {
         clock_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
         if (clock_fd < 0) {
             warn("timerfd_create");
@@ -1320,10 +1332,12 @@ int main(int argc, char* argv[]) {
                 stop = true;
                 break;
             }
+
             if (stop) {
                 break;
             }
         }
+
         if (stop) {
             break;
         }
@@ -1331,9 +1345,11 @@ int main(int argc, char* argv[]) {
         if (submit) {
             wl_display_cancel_read(display);
             take_input();
+
             if (stop) {
                 break;
             }
+
             continue;
         }
 
@@ -1342,18 +1358,21 @@ int main(int argc, char* argv[]) {
             { .fd = repeat_fd, .events = POLLIN },
             { .fd = fail_fd, .events = POLLIN },
         };
+
         nfds_t nfds = 3;
+
         if (clock_fd >= 0) {
-            pfds[3].fd = clock_fd;
-            pfds[3].events = POLLIN;
+            pfds[3] = (struct pollfd) { .fd = clock_fd, .events = POLLIN };
             nfds = 4;
         }
+
         int ready = poll(pfds, nfds, -1);
         if (ready < 0) {
             wl_display_cancel_read(display);
             if (errno == EINTR) {
                 continue;
             }
+
             warn("poll");
             exit_status = EXIT_FAILURE;
             break;

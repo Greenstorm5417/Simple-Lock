@@ -11,5 +11,5 @@ struct config {
     bool hours12;
 };
 
-void config_defaults(struct config* cfg);
-int config_load(struct config* cfg, const char* path);
+void config_defaults(struct config* config);
+int config_load(struct config* config, const char* path);

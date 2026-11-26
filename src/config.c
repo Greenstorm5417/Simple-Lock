@@ -9,17 +9,15 @@
 
 #include "config.h"
 
-#define LINE_MAX_LEN 256
 #define FAIL_MS_MAX 60000
 
-static void apply_line(struct config* cfg, const char* path, int line, const char* key, const char* value);
+static void apply_line(struct config* config, const char* path, int line, const char* key, const char* value);
 static int parse_color(const char* text, uint32_t* out);
-static int read_config(struct config* cfg, const char* path);
-static int read_line(FILE* file, char* line, size_t size);
-static int read_optional(struct config* cfg, const char* path);
+static int read_config(struct config* config, const char* path);
+static int read_optional(struct config* config, const char* path);
 static int user_path(char* path, size_t size);
 
-static void apply_line(struct config* cfg, const char* path, int line, const char* key, const char* value) {
+static void apply_line(struct config* config, const char* path, int line, const char* key, const char* value) {
     if (strcmp(key, "idle") == 0 || strcmp(key, "input") == 0 || strcmp(key, "fail") == 0) {
         uint32_t color = 0;
         if (parse_color(value, &color) < 0) {
@@ -28,11 +26,11 @@ static void apply_line(struct config* cfg, const char* path, int line, const cha
         }
 
         if (strcmp(key, "idle") == 0) {
-            cfg->idle = color;
+            config->idle = color;
         } else if (strcmp(key, "input") == 0) {
-            cfg->input = color;
+            config->input = color;
         } else {
-            cfg->fail = color;
+            config->fail = color;
         }
 
         return;
@@ -42,22 +40,22 @@ static void apply_line(struct config* cfg, const char* path, int line, const cha
         char* end_ptr;
 
         errno = 0;
-
         long ms = strtol(value, &end_ptr, 10);
+
         if (end_ptr == value || *end_ptr || errno != 0 || ms < 1 || ms > FAIL_MS_MAX) {
             warnx("%s:%d: bad fail_ms '%s'", path, line, value);
             return;
         }
 
-        cfg->fail_ms = (int) ms;
+        config->fail_ms = (int) ms;
         return;
     }
 
     if (strcmp(key, "clock") == 0) {
         if (strcmp(value, "on") == 0 || strcmp(value, "yes") == 0 || strcmp(value, "1") == 0) {
-            cfg->clock = true;
+            config->clock = true;
         } else if (strcmp(value, "off") == 0 || strcmp(value, "no") == 0 || strcmp(value, "0") == 0) {
-            cfg->clock = false;
+            config->clock = false;
         } else {
             warnx("%s:%d: bad clock '%s'", path, line, value);
         }
@@ -66,9 +64,9 @@ static void apply_line(struct config* cfg, const char* path, int line, const cha
 
     if (strcmp(key, "hours") == 0) {
         if (strcmp(value, "12") == 0 || strcmp(value, "ampm") == 0 || strcmp(value, "12h") == 0) {
-            cfg->hours12 = true;
+            config->hours12 = true;
         } else if (strcmp(value, "24") == 0 || strcmp(value, "24h") == 0) {
-            cfg->hours12 = false;
+            config->hours12 = false;
         } else {
             warnx("%s:%d: bad hours '%s'", path, line, value);
         }
@@ -92,8 +90,8 @@ static int parse_color(const char* text, uint32_t* out) {
     char* end_ptr;
 
     errno = 0;
-
     unsigned long value = strtoul(text, &end_ptr, 16);
+
     if (end_ptr == text || *end_ptr || errno != 0 || value > UINT32_MAX) {
         return -1;
     }
@@ -102,33 +100,26 @@ static int parse_color(const char* text, uint32_t* out) {
     return 0;
 }
 
-static int read_config(struct config* cfg, const char* path) {
+static int read_config(struct config* config, const char* path) {
     FILE* fp = fopen(path, "r");
     if (!fp) {
         return -1;
     }
 
-    char line[LINE_MAX_LEN];
+    char* line = NULL;
+    size_t capacity = 0;
+    ssize_t length;
     int number = 0;
 
-    for (;;) {
-        int got = read_line(fp, line, sizeof(line));
-        if (got == 0) {
-            break;
-        }
-
+    while ((length = getline(&line, &capacity, fp)) != -1) {
         number++;
-        if (got < 0) {
-            warnx("%s:%d: line is too long", path, number);
-            continue;
-        }
 
-        char* end = strpbrk(line, "\r\n");
-        if (end) {
-            *end = '\0';
+        while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r')) {
+            line[--length] = '\0';
         }
 
         char* text = line;
+
         while (*text == ' ' || *text == '\t') {
             text++;
         }
@@ -137,43 +128,38 @@ static int read_config(struct config* cfg, const char* path) {
             continue;
         }
 
-        char key[32], value[32];
+        char key[32];
+        char value[32];
+
         if (sscanf(text, "%31s %31s", key, value) != 2) {
             warnx("%s:%d: expected a key and a value", path, number);
             continue;
         }
 
-        apply_line(cfg, path, number, key, value);
+        apply_line(config, path, number, key, value);
+    }
+
+    int saved_errno = errno;
+
+    free(line);
+
+    if (ferror(fp)) {
+        fclose(fp);
+        errno = saved_errno ? saved_errno : EIO;
+        return -1;
     }
 
     fclose(fp);
     return 0;
 }
 
-static int read_line(FILE* file, char* line, size_t size) {
-    if (!fgets(line, (int) size, file)) {
-        return 0;
-    }
-
-    if (strchr(line, '\n') != NULL || feof(file)) {
-        return 1;
-    }
-
-    int ch = 0;
-    while ((ch = fgetc(file)) != EOF && ch != '\n') {}
-
-    line[0] = '\0';
-    errno = EMSGSIZE;
-    return -1;
-}
-
-static int read_optional(struct config* cfg, const char* path) {
-    if (read_config(cfg, path) == 0) {
+static int read_optional(struct config* config, const char* path) {
+    if (read_config(config, path) == 0) {
         return 0;
     }
 
     if (errno != ENOENT) {
-        warn("cannot open '%s'", path);
+        warn("cannot read '%s'", path);
     }
 
     return -1;
@@ -200,21 +186,21 @@ static int user_path(char* path, size_t size) {
     return 0;
 }
 
-void config_defaults(struct config* cfg) {
-    cfg->idle = 0x000000u;
-    cfg->input = 0x005577u;
-    cfg->fail = 0xCC3333u;
-    cfg->fail_ms = 1000;
-    cfg->clock = true;
-    cfg->hours12 = false;
+void config_defaults(struct config* config) {
+    config->idle = 0x000000;
+    config->input = 0x005577;
+    config->fail = 0xcc3333;
+    config->fail_ms = 1000;
+    config->clock = true;
+    config->hours12 = false;
 }
 
-int config_load(struct config* cfg, const char* path) {
-    config_defaults(cfg);
+int config_load(struct config* config, const char* path) {
+    config_defaults(config);
 
     if (path) {
-        if (read_config(cfg, path) < 0) {
-            warn("cannot open '%s'", path);
+        if (read_config(config, path) < 0) {
+            warn("cannot read '%s'", path);
             return -1;
         }
 
@@ -222,8 +208,9 @@ int config_load(struct config* cfg, const char* path) {
     }
 
     char user[PATH_MAX];
-    if (user_path(user, sizeof(user)) == 0 && read_optional(cfg, user) == 0) {
-        return 0;
+
+    if (user_path(user, sizeof(user)) == 0) {
+        read_optional(config, user);
     }
 
     return 0;
